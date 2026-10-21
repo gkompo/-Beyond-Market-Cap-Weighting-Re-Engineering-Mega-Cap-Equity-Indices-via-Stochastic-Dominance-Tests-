@@ -4,24 +4,47 @@
 [![Convex Optimization](https://img.shields.io/badge/optimization-CVXPY%20%7C%20Clarabel-green.svg)](https://www.cvxpy.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Academic Research](https://img.shields.io/badge/Research-AUEB%20%7C%20DIEES-purple.svg)](https://www.dept.aueb.gr/en/diees)
-[![Empirical Status](https://img.shields.io/badge/Data-100%25%20Real%20Market%20Data-red.svg)](#empirical-results)
+[![Empirical Status](https://img.shields.io/badge/Data-100%25%20Real%20Market%20Data-red.svg)](#5-full-out-of-sample-empirical-results)
 
-An advanced quantitative finance and econometrics research project evaluating the efficiency of **alternative index weighting schemes** against traditional market-capitalization weighting across major equity benchmarks (**Nasdaq 100** and **Euro Stoxx 50**).
+An advanced quantitative finance and financial econometrics study investigating whether **re-engineering the weighting mechanisms** of major equity benchmarks (**Nasdaq 100** and **Euro Stoxx 50**) expands the investment opportunity set for risk-averse investors.
 
-Rather than relying purely on Mean-Variance assumptions (Sharpe ratios) which collapse under non-Gaussian fat tails and crash risk, this study integrates **Non-Parametric Second-Order Stochastic Dominance (SSD) Spanning Tests** based on the seminal econometrics methodology of **Arvanitis, Hallam, Post, & Topaloglou (2019, *Journal of Business & Economic Statistics*)**.
+Beyond classical Mean-Variance metrics (which fail under fat-tailed, non-Gaussian returns), this project implements **Non-Parametric Second-Order Stochastic Dominance (SSD) Spanning Tests** based on the seminal econometrics methodology of **Arvanitis, Hallam, Post, & Topaloglou (2019, *Journal of Business & Economic Statistics*)** and builds upon the portfolio allocation framework of **Papavasiliou, Topaloglou, & Tsomidis (2022, *SPOUDAI*)**.
+
+---
+
+## Visual Summary & Empirical Highlights
+
+<div align="center">
+
+| Out-of-Sample Performance | Drawdown Dynamics (Crash Risk) |
+| :---: | :---: |
+| ![Cumulative Wealth Trajectory](figures/cumulative_returns_comparison.png) | ![Underwater Drawdown Profiles](figures/drawdown_underwater_curves.png) |
+| *Figure 1: 4.9-year out-of-sample cumulative wealth trajectories.* | *Figure 2: Drawdown profile; Min CVaR cuts maximum loss in half.* |
+
+| Visual Proof of Stochastic Dominance (SSD) | Risk-Return Efficiency Frontier |
+| :---: | :---: |
+| ![Second-Order Integrated CDF](figures/ssd_integrated_cdf_curves.png) | ![Risk Return Frontier](figures/risk_return_frontier.png) |
+| *Figure 3: Integrated CDF shortfall difference ($\hat{\eta} > 0$ shaded area).* | *Figure 4: Annualized Volatility vs Return across weighting schemes.* |
+
+| Mega-Cap Capital Concentration (Lorenz Curve) | Asymmetric Factor Sensitivities |
+| :---: | :---: |
+| ![Lorenz Concentration Curves](figures/concentration_lorenz_curves.png) | ![Asymmetric Betas](figures/asymmetric_betas_comparison.png) |
+| *Figure 5: Gini inequality showing Top 5 holding 51.47% of capital.* | *Figure 6: Downside Beta ($\beta^-$) vs Upside Beta ($\beta^+$) (Ang et al., 2006).* |
+
+</div>
 
 ---
 
 ## Table of Contents
 - [1. Motivation: The Mega-Cap Concentration Crisis](#1-motivation-the-mega-cap-concentration-crisis)
-- [2. Research Question & Identification Strategy](#2-research-question--identification-strategy)
+- [2. Methodological Architecture & Workflow](#2-methodological-architecture--workflow)
 - [3. Portfolio Weighting Formulations](#3-portfolio-weighting-formulations)
 - [4. Stochastic Dominance Spanning Econometrics](#4-stochastic-dominance-spanning-econometrics)
 - [5. Full Out-of-Sample Empirical Results](#5-full-out-of-sample-empirical-results)
   - [Nasdaq 100 Results](#nasdaq-100-results)
   - [Euro Stoxx 50 Results](#euro-stoxx-50-results)
-- [6. Econometric Diagnostics & Factor Regressions](#6-econometric-diagnostics--factor-regressions)
-- [7. Project Architecture & Codebase](#7-project-architecture--codebase)
+- [6. Econometric Diagnostics & Time-Series Properties](#6-econometric-diagnostics--time-series-properties)
+- [7. Codebase Structure & Pipeline](#7-codebase-structure--pipeline)
 - [8. Quickstart & Reproducibility](#8-quickstart--reproducibility)
 - [9. Academic References & Master's Thesis Context](#9-academic-references--masters-thesis-context)
 
@@ -29,41 +52,63 @@ Rather than relying purely on Mean-Variance assumptions (Sharpe ratios) which co
 
 ## 1. Motivation: The Mega-Cap Concentration Crisis
 
-Market-capitalization weighted indices (such as the **Nasdaq 100** and **S&P 500**) have reached historic levels of concentration. In our empirical sample of 93 continuous Nasdaq 100 constituent equities:
-* The **Top 5 stocks represent 51.47%** of the total index capitalization.
-* The **Herfindahl-Hirschman Index (HHI)** is `0.0648`, translating to an **Effective Number of Constituents (ENC)** of only:
-  $$\text{ENC} = \frac{1}{\sum_{i=1}^N w_i^2} = \mathbf{15.4} \quad (\text{out of 93 assets!})$$
-* Traditional cap-weighted indexing exposes passive investors to severe unhedged idiosyncratic shock exposure, left-tail crash risk, and non-linear market shocks.
+Modern capitalization-weighted benchmarks have reached extreme concentration. In our empirical sample of 93 continuous Nasdaq 100 constituent equities:
+* The **Top 5 stocks represent 51.47%** of the entire index capitalization.
+* The **Herfindahl-Hirschman Index (HHI)** is `0.0648`, which yields an **Effective Number of Constituents (ENC)** of only:
+  $$\text{ENC} = \frac{1}{\sum_{i=1}^N w_i^2} = \mathbf{15.4} \quad (\text{out of 93 stocks!})$$
 
 ```mermaid
-pie title Nasdaq 100 Capitalization Concentration
-    "Top 5 Mega-Caps (NVDA, AAPL, MSFT, AMZN, GOOGL)" : 51.47
-    "Remaining 88 Stocks" : 48.53
+flowchart LR
+    A["Raw Index Constituents<br>(N = 93 to 101 Stocks)"] --> B["Traditional Market-Cap Weighting<br>(Capital-Weighted)"]
+    B --> C["Mega-Cap Concentration<br>Top 5 Stocks = 51.47%"]
+    C --> D["Severe Idiosyncratic Risk<br>& Tail Fragility"]
+    
+    A --> E["Re-Engineered Allocations<br>(Identical N Assets)"]
+    E --> F["Equal Weight (1/N)<br>ENC = 93.0"]
+    E --> G["Min CVaR Downside LP<br>MDD: -24.8% ➔ -11.9%"]
+    E --> H["Black-Litterman Shrinkage<br>Beta: 1.0 ➔ 0.33"]
+    E --> I["Robust Optimization<br>Worst-Case Bound"]
+    
+    F & G & H & I --> J["Second-Order Stochastic<br>Dominance (SSD) Spanning Tests"]
+    J --> K["H0 Rejected (p < 0.05):<br>Strict Welfare Gain for All<br>Risk-Averse Investors!"]
 ```
 
 ---
 
-## 2. Research Question & Identification Strategy
+## 2. Methodological Architecture & Workflow
 
-> **Core Hypothesis:**  
-> *Does re-engineering the weight allocations of a fixed constituent universe expand the investment opportunity set for all risk-averse investors under Second-Order Stochastic Dominance (SSD) spanning, or is the market-cap benchmark already efficient?*
+To guarantee identification and avoid stock-picking bias, **all $N$ constituents are kept identical** across all models ($w_i \ge 0, \sum w_i = 1$).
 
-### Identification Guarantee
-To isolate the **pure impact of the portfolio weighting operator**, the constituent asset universe is held strictly identical across all models:
-$$\mathbf{w}_t \in \mathbb{R}^N, \quad \sum_{i=1}^N w_{i,t} = 1, \quad w_{i,t} \ge 0 \quad (\text{Long-only, frictionless no-shorting})$$
-This removes stock-picking bias and selection artifacts, allowing a direct mathematical evaluation of the weighting mechanism itself.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as Real Market Data (2021-2026)
+    participant O as Convex Optimization (CVXPY / Clarabel)
+    participant B as Rolling Rebalancing Engine (21d, 42d, 63d)
+    participant E as Econometric Diagnostic Battery
+    participant S as Topaloglou SSD Spanning Test
+
+    D->>O: Historical daily prices & market caps (lookback = 252d)
+    O->>B: Compute optimal weights w (VW, 1/N, Min CVaR, BL, Robust)
+    B->>E: Generate out-of-sample daily returns (4.9 years OOS)
+    E->>E: Jarque-Bera, ARCH-LM, Newey-West HAC Alphas, Downside Betas
+    E->>S: Empirical returns matrix (Benchmark Y vs Alternatives X)
+    S->>S: Linear Program on F^(2)(z) shortfall curves
+    S->>S: Stationary Block Subsampling Bootstrap (b = T^(2/3))
+    S-->>B: Compute p-values & Spanning Decision
+```
 
 ---
 
 ## 3. Portfolio Weighting Formulations
 
-All models are solved via convex optimization (`cvxpy` with the conic solver `Clarabel`):
+All models are solved via convex optimization (`cvxpy` using the conic interior-point solver `Clarabel`):
 
 ### 1. Value-Weighted / Market-Cap Benchmark (VW)
 $$w_{i,t}^{MC} = \frac{\text{MarketCap}_{i,t}}{\sum_{j=1}^N \text{MarketCap}_{j,t}}$$
 
 ### 2. Equal Weighting (1/N)
-Naive diversification baseline (DeMiguel, Garlappi, & Uppal, 2009):
+Naive 1/N allocation (DeMiguel, Garlappi, & Uppal, 2009):
 $$w_{i,t}^{EW} = \frac{1}{N}$$
 
 ### 3. Scenario-Based Downside Risk / Minimum CVaR
@@ -72,7 +117,7 @@ $$\min_{\mathbf{w}, \gamma, \mathbf{u}} \quad \gamma + \frac{1}{(1-\alpha) T} \s
 $$\text{subject to} \quad u_t \ge -\mathbf{r}_t^\top \mathbf{w} - \gamma, \quad u_t \ge 0, \quad \mathbf{1}^\top \mathbf{w} = 1, \quad \mathbf{w} \ge 0$$
 
 ### 4. Black-Litterman Model
-Reverse-engineers implied equilibrium excess returns $\mathbf{\Pi} = \delta \mathbf{\Sigma} \mathbf{w}^{MC}$ (with risk aversion $\delta = 2.5$) and applies Bayesian shrinkage towards cross-sectional equilibrium to correct for estimation error.
+Reverse-engineers implied equilibrium excess returns $\mathbf{\Pi} = \delta \mathbf{\Sigma} \mathbf{w}^{MC}$ ($\delta = 2.5$) and combines them with shrinkage views towards cross-sectional equilibrium.
 
 ### 5. Worst-Case Robust Portfolio Optimization
 Protects against parameter uncertainty in expected return estimates $\hat{\boldsymbol{\mu}}$ under an ellipsoidal uncertainty set with radius $\kappa = 0.15$:
@@ -82,17 +127,29 @@ $$\max_{\mathbf{w}} \left( \hat{\boldsymbol{\mu}}^\top \mathbf{w} - \kappa \|\ma
 
 ## 4. Stochastic Dominance Spanning Econometrics
 
-Following **Arvanitis, Hallam, Post, & Topaloglou (2019, *JBES*)**, we test whether the Market-Cap benchmark $Y$ spans the augmented opportunity set containing alternative weighting strategies $X$ for all risk-averse utility functions $\mathcal{U}_2 = \{ u : u' \ge 0, u'' \le 0 \}$.
+Following **Arvanitis, Hallam, Post, & Topaloglou (2019, *JBES*)**, we test whether the Market-Cap benchmark $Y$ spans the augmented set containing alternative strategies $X$ for all risk-averse utility functions $\mathcal{U}_2 = \{ u : u' \ge 0, u'' \le 0 \}$.
 
 The Second-Order Integrated Cumulative Distribution Function (Shortfall profile) is:
 $$F^{(2)}(z; \mathbf{w}) = \mathbb{E}\left[\max(z - \mathbf{r}^\top \mathbf{w}, 0)\right] = \frac{1}{T} \sum_{t=1}^T \max(z - \mathbf{r}_t^\top \mathbf{w}, 0)$$
 
-The empirical test statistic evaluates the maximal shortfall advantage:
+The test statistic measures the maximal empirical shortfall advantage:
 $$\hat{\eta} = \sup_{z \in \mathcal{Z}} \left[ F^{(2)}(z; \mathbf{r}^{\text{Benchmark}}) - F^{(2)}(z; \mathbf{r}^{\text{Alternative}}) \right]$$
 
-* Under $H_0$: The Benchmark spans the investment set ($\hat{\eta} \le 0$).
-* Under $H_1$: The Alternative strategy strictly **Second-Order Stochastically Dominates (SSD)** the benchmark ($\hat{\eta} > 0$).
-* **Inference:** $p$-values are computed via stationary block subsampling under the null boundary with block size $b = \lfloor T^{2/3} \rfloor$.
+```mermaid
+graph TD
+    subgraph Hypothesis Testing Framework
+        H0["H0: Benchmark Spans Investment Universe (eta <= 0)"]
+        H1["H1: Alternative Strictly SSD-Dominates Benchmark (eta > 0)"]
+    end
+    
+    H0 --> LP["Solve Linear Program across Grid z in Z"]
+    LP --> STAT["Calculate Maximal Violation eta_stat"]
+    STAT --> BOOT["Stationary Block Subsampling under H0 Boundary"]
+    BOOT --> PVAL["Compute Empirical p-value = P(eta_b >= eta_obs)"]
+    PVAL --> DEC{"Is p-value < 0.05?"}
+    DEC -- Yes --> REJ["REJECT H0:<br>Alternative Stochastically Dominates Benchmark!"]
+    DEC -- No --> ACC["ACCEPT H0:<br>Benchmark Spans Opportunity Set"]
+```
 
 ---
 
@@ -181,10 +238,10 @@ $$\hat{\eta} = \sup_{z \in \mathcal{Z}} \left[ F^{(2)}(z; \mathbf{r}^{\text{Benc
 
 ---
 
-## 6. Econometric Diagnostics & Factor Regressions
+## 6. Econometric Diagnostics & Time-Series Properties
 
-### Distributional Diagnostics (Why Stochastic Dominance is Necessary)
-Traditional Mean-Variance optimization assumes returns follow Gaussian distributions. We run formal tests to assess normality and time-varying volatility:
+### Non-Gaussianity & Volatility Clustering (The Statistical Need for Stochastic Dominance)
+Traditional Mean-Variance analysis assumes returns follow Gaussian distributions. We run formal tests to assess normality and time-varying volatility:
 
 ```
 [Diagnostic Test Suite on Daily Out-of-Sample Returns]
@@ -202,10 +259,18 @@ Extreme fat tails and volatility clustering (ARCH) mandate Non-Parametric Stocha
 
 ---
 
-## 7. Project Architecture & Codebase
+## 7. Codebase Structure & Pipeline
 
 ```
 equity-index-reengineering/
+│
+├── figures/                              # High-resolution empirical figures (PNG)
+│   ├── cumulative_returns_comparison.png # 4.9y Out-of-sample wealth trajectories
+│   ├── drawdown_underwater_curves.png    # Drawdown profile / crash resilience
+│   ├── ssd_integrated_cdf_curves.png     # Visual proof of Second-Order Stochastic Dominance
+│   ├── risk_return_frontier.png          # Sharpe/Sortino efficiency tradeoff
+│   ├── concentration_lorenz_curves.png   # Lorenz curve & Gini index concentration
+│   └── asymmetric_betas_comparison.png   # Downside vs Upside systematic betas
 │
 ├── data/                                 # 100% Real constituent data & historical prices
 │   ├── nasdaq100_constituents.csv        # Live constituents & official weights
@@ -219,10 +284,11 @@ equity-index-reengineering/
 ├── portfolio_models.py                   # CVXPY convex optimizers (CVaR, BL, Robust, EW, MC)
 ├── stochastic_spanning.py                # Arvanitis & Topaloglou (2019) SSD Spanning Tests
 ├── econometric_tests.py                  # Jarque-Bera, ARCH-LM, HAC Alphas, Downside Betas
+├── generate_all_charts.py                # High-res publication graphics generator
 ├── run_experiments.py                    # Benchmark out-of-sample simulation script
 ├── run_full_econometric_study.py         # Master multi-frequency empirical suite
 ├── requirements.txt                      # Exact package dependencies
-└── README.md                             # This research documentation
+└── README.md                             # Comprehensive research documentation
 ```
 
 ---
@@ -242,12 +308,17 @@ pip install -r requirements.txt
 python fetch_real_data.py
 ```
 
-### 3. Run the Full Multi-Frequency Econometric Study
+### 3. Generate All Publication Figures
+```bash
+python generate_all_charts.py
+```
+
+### 4. Run the Full Multi-Frequency Econometric Study
 ```bash
 python run_full_econometric_study.py
 ```
 
-### 4. Run the Econometric Diagnostic Suite
+### 5. Run the Econometric Diagnostic Suite
 ```bash
 python econometric_tests.py
 ```
@@ -256,7 +327,7 @@ python econometric_tests.py
 
 ## 9. Academic References & Master's Thesis Context
 
-This repository serves as a pilot empirical foundation for a Master's Thesis at the **Athens University of Economics and Business (AUEB)**, Department of International and European Economic Studies (DIEES), proposed under the supervision of **Dr. Georgios Tsomidis** and **Prof. Nikolaos Topaloglou**.
+This repository serves as an empirical foundation for a Master's Thesis at the **Athens University of Economics and Business (AUEB)**, Department of International and European Economic Studies (DIEES), proposed under the supervision of **Dr. Georgios Tsomidis** and **Prof. Nikolaos Topaloglou**.
 
 > **Note on Data Fidelity:** While this pilot project uses real market data collected via OpenBB and `yfinance`, the final dissertation will utilize point-in-time constituent history from the **Bloomberg Terminal** to completely eradicate survivorship bias.
 
