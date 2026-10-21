@@ -21,17 +21,17 @@ Beyond classical Mean-Variance metrics (which fail under fat-tailed, non-Gaussia
 
 | Out-of-Sample Performance | Drawdown Dynamics (Crash Risk) |
 | :---: | :---: |
-| ![Cumulative Wealth Trajectory](figures/cumulative_returns_comparison.png) | ![Underwater Drawdown Profiles](figures/drawdown_underwater_curves.png) |
-| *Figure 1: 4.9-year out-of-sample cumulative wealth trajectories.* | *Figure 2: Drawdown profile; Min CVaR cuts maximum loss in half.* |
+| ![Cumulative Wealth Trajectory](figures/cumulative_returns_comparison.png?raw=true&v=3) | ![Underwater Drawdown Profiles](figures/drawdown_underwater_curves.png?raw=true&v=3) |
+| *Figure 1: 4.9-year out-of-sample cumulative wealth trajectories (Log Scale).* | *Figure 2: Drawdown profile; Min CVaR cuts maximum loss in half.* |
 
 | Visual Proof of Stochastic Dominance (SSD) | Risk-Return Efficiency Frontier |
 | :---: | :---: |
-| ![Second-Order Integrated CDF](figures/ssd_integrated_cdf_curves.png) | ![Risk Return Frontier](figures/risk_return_frontier.png) |
+| ![Second-Order Integrated CDF](figures/ssd_integrated_cdf_curves.png?raw=true&v=3) | ![Risk Return Frontier](figures/risk_return_frontier.png?raw=true&v=3) |
 | *Figure 3: Integrated CDF shortfall difference ($\hat{\eta} > 0$ shaded area).* | *Figure 4: Annualized Volatility vs Return across weighting schemes.* |
 
 | Mega-Cap Capital Concentration (Lorenz Curve) | Asymmetric Factor Sensitivities |
 | :---: | :---: |
-| ![Lorenz Concentration Curves](figures/concentration_lorenz_curves.png) | ![Asymmetric Betas](figures/asymmetric_betas_comparison.png) |
+| ![Lorenz Concentration Curves](figures/concentration_lorenz_curves.png?raw=true&v=3) | ![Asymmetric Betas](figures/asymmetric_betas_comparison.png?raw=true&v=3) |
 | *Figure 5: Gini inequality showing Top 5 holding 45.3% to 51.5% of capital.* | *Figure 6: Downside Beta ($\beta^-$) vs Upside Beta ($\beta^+$) (Ang et al., 2006).* |
 
 </div>
