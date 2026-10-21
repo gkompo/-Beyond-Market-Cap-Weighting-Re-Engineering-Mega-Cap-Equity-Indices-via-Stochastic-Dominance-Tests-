@@ -1,16 +1,15 @@
 """
 run_experiments.py
 ------------------
-Main execution script for Thesis Research:
-Re-Engineering Equity Indices (Nasdaq 100 & Euro Stoxx 50) using Real Data.
-Compares Market-Cap Benchmark against:
+Modular Out-of-Sample Backtest Script comparing Official Index Benchmarks
+(^NDX for Nasdaq 100, ^STOXX50E for Euro Stoxx 50) against Re-Engineered Weightings:
 - Equal Weight (1/N)
-- Scenario-based Downside Risk / Minimum CVaR
-- Black-Litterman
-- Worst-Case Robust Optimization
+- Scenario-based Downside Risk / Minimum CVaR (Rockafellar & Uryasev 2000)
+- Black-Litterman Shrinkage
+- Worst-Case Robust Optimization (SOCP)
 
-Then evaluates each strategy with Second-Order Stochastic Dominance (SSD)
-Spanning Tests (Arvanitis, Hallam, Post, & Topaloglou, 2019).
+Evaluated with Second-Order Stochastic Dominance (SSD) Spanning Tests
+(Arvanitis, Hallam, Post, & Topaloglou, 2019).
 """
 
 import os
@@ -21,7 +20,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from portfolio_models import (
-    get_market_cap_weights,
     get_equal_weights,
     get_min_cvar_weights,
     get_black_litterman_weights,
@@ -32,7 +30,6 @@ from stochastic_spanning import arvanitis_topaloglou_subsampling_test
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 def compute_performance_metrics(returns_series, rf=0.02 / 252):
-    """Computes comprehensive risk and return metrics on daily returns."""
     r = returns_series.values
     ann_factor = 252
     
@@ -68,64 +65,55 @@ def run_backtest_for_index(index_name, rebalance_freq=21, lookback=252):
     print(f"=======================================================")
     
     price_file = os.path.join(DATA_DIR, f"{index_name}_prices.csv")
-    mc_file = os.path.join(DATA_DIR, f"{index_name}_market_caps.csv")
+    bench_file = os.path.join(DATA_DIR, f"{index_name}_benchmark_index.csv")
     
     prices = pd.read_csv(price_file, index_col=0, parse_dates=True)
-    mc_df = pd.read_csv(mc_file)
+    bench_raw = pd.read_csv(bench_file, index_col=0, parse_dates=True)
     
-    # Align constituents
-    common_tickers = [c for c in prices.columns if c in mc_df["symbol"].values]
-    prices = prices[common_tickers].ffill().dropna()
-    mc_series = mc_df.set_index("symbol").loc[common_tickers, "market_cap"]
+    # Align dates between constituent stocks and official benchmark index
+    common_dates = prices.index.intersection(bench_raw.index)
+    prices = prices.loc[common_dates].ffill().dropna()
+    bench_series = bench_raw.loc[common_dates].iloc[:, 0].ffill().dropna()
     
-    # Daily returns
+    valid_dates = prices.index.intersection(bench_series.index)
+    prices = prices.loc[valid_dates]
+    bench_series = bench_series.loc[valid_dates]
+    
     returns = prices.pct_change().dropna()
-    T, N = returns.shape
-    print(f"Aligned Data: {T} daily periods across {N} real stocks.")
+    bench_returns = bench_series.pct_change().loc[returns.index]
     
-    # Shares proxy to reconstruct historical point-in-time market capitalizations (strictly eliminates lookahead bias)
-    shares_proxy = mc_series / prices.iloc[-1]
-    init_mc = shares_proxy * prices.iloc[lookback - 1]
-    init_mc_weights = get_market_cap_weights(init_mc)
+    N = prices.shape[1]
+    T = len(returns)
+    print(f"Aligned Data: {T} daily periods across {N} real traded stocks.")
     
-    # Rolling out-of-sample simulation
-    strategies = ["Market-Cap (Benchmark)", "Equal Weight (1/N)", "Min CVaR (Downside)", "Black-Litterman", "Robust Optimization"]
+    strategies = [
+        "Official Benchmark Index",
+        "Equal Weight (1/N)",
+        "Min CVaR (Downside)",
+        "Black-Litterman",
+        "Robust Optimization"
+    ]
     strat_returns = {s: [] for s in strategies}
-    rebalance_dates = []
-    
-    print(f"Executing rolling out-of-sample rebalancing (Lookback={lookback}d, Rebalance={rebalance_freq}d)...")
-    
-    # Start after warm-up
     current_weights = {
-        "Market-Cap (Benchmark)": init_mc_weights,
         "Equal Weight (1/N)": get_equal_weights(N),
         "Min CVaR (Downside)": get_equal_weights(N),
-        "Black-Litterman": init_mc_weights,
+        "Black-Litterman": get_equal_weights(N),
         "Robust Optimization": get_equal_weights(N)
     }
     
+    print(f"Executing rolling out-of-sample rebalancing (Lookback={lookback}d, Rebalance={rebalance_freq}d)...")
+    
     for t in range(lookback, T):
-        # Rebalance check
         if (t - lookback) % rebalance_freq == 0:
             hist_returns = returns.iloc[t - lookback : t].values
-            
-            # Point-in-time market-cap as of t-1 (strictly backward-looking, zero lookahead)
-            pt_mc = shares_proxy * prices.iloc[t - 1]
-            dyn_mc_weights = get_market_cap_weights(pt_mc)
-            
-            # 1. Market-Cap
-            current_weights["Market-Cap (Benchmark)"] = dyn_mc_weights
-            # 2. Equal Weight
             current_weights["Equal Weight (1/N)"] = get_equal_weights(N)
-            # 3. Min CVaR
             current_weights["Min CVaR (Downside)"] = get_min_cvar_weights(hist_returns, alpha=0.95)
-            # 4. Black-Litterman
-            current_weights["Black-Litterman"] = get_black_litterman_weights(hist_returns, dyn_mc_weights)
-            # 5. Robust Optimization
+            current_weights["Black-Litterman"] = get_black_litterman_weights(hist_returns, get_equal_weights(N))
             current_weights["Robust Optimization"] = get_robust_weights(hist_returns, kappa=0.15)
             
         daily_r = returns.iloc[t].values
-        for s in strategies:
+        strat_returns["Official Benchmark Index"].append(bench_returns.iloc[t])
+        for s in ["Equal Weight (1/N)", "Min CVaR (Downside)", "Black-Litterman", "Robust Optimization"]:
             strat_returns[s].append(np.dot(daily_r, current_weights[s]))
             
     df_out = pd.DataFrame(strat_returns, index=returns.index[lookback:])
@@ -140,18 +128,18 @@ def run_backtest_for_index(index_name, rebalance_freq=21, lookback=252):
     print("\n--- OUT-OF-SAMPLE PERFORMANCE SUMMARY ---")
     print(metrics_df.to_string())
     
-    # 2. Stochastic Dominance Spanning Tests (Topaloglou Methodology)
+    # 2. Stochastic Dominance Spanning Tests
     print("\n--- SECOND-ORDER STOCHASTIC DOMINANCE (SSD) SPANNING TESTS ---")
-    print("Testing H0: Market-Cap Benchmark spans/dominates alternative weighting strategy")
-    bench_returns = df_out["Market-Cap (Benchmark)"].values
+    print("Testing H0: Official Benchmark Index spans/dominates alternative weighting strategy")
+    bench_r = df_out["Official Benchmark Index"].values
     
     sd_results = []
     for s in strategies:
-        if s == "Market-Cap (Benchmark)":
+        if s == "Official Benchmark Index":
             continue
         test_r = df_out[s].values
         test_res = arvanitis_topaloglou_subsampling_test(
-            test_r, bench_returns, n_subsamples=400, num_grid=60
+            test_r, bench_r, n_subsamples=400, num_grid=60
         )
         sd_results.append({
             "Alternative Strategy": s,
@@ -166,12 +154,8 @@ def run_backtest_for_index(index_name, rebalance_freq=21, lookback=252):
     return metrics_df, sd_df
 
 def main():
-    # 1. Run for Euro Stoxx 50
     es50_metrics, es50_sd = run_backtest_for_index("eurostoxx50", rebalance_freq=21, lookback=252)
-    
-    # 2. Run for Nasdaq 100
     ndx_metrics, ndx_sd = run_backtest_for_index("nasdaq100", rebalance_freq=21, lookback=252)
-    
     print("\n[ALL EXPERIMENTS COMPLETED SUCCESSFULLY]")
 
 if __name__ == "__main__":

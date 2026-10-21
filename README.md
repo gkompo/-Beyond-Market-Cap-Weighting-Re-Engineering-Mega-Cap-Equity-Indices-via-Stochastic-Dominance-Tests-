@@ -329,6 +329,11 @@ python run_full_econometric_study.py
 python econometric_tests.py
 ```
 
+### 6. Run the Multi-Layer Automated Validation Suite (10/10 Audits)
+```bash
+python validate_all.py
+```
+
 ---
 
 ## 9. Academic References & Master's Thesis Context
