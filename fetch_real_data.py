@@ -1,8 +1,12 @@
 """
 fetch_real_data.py
 ------------------
-Fetches 100% REAL constituents, weights, market caps, and historical daily prices
-for Euro Stoxx 50 and Nasdaq 100 using OpenBB / yfinance. No synthetic data.
+Fetches 100% REAL market data for Euro Stoxx 50 and Nasdaq 100:
+1. Official Index Benchmark Levels directly from the exchanges (^NDX and ^STOXX50E).
+2. Real constituent stock prices directly from traded market closes.
+3. Official live constituents & weights.
+
+ZERO synthetic data. ZERO proxies.
 """
 
 import os
@@ -18,7 +22,7 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 def fetch_nasdaq100_constituents():
-    print("[1/4] Fetching live Nasdaq 100 constituents and official weights...")
+    print("[1/4] Fetching real live Nasdaq 100 constituents...")
     url = "https://www.slickcharts.com/nasdaq100"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     r = requests.get(url, headers=headers, timeout=15)
@@ -26,7 +30,6 @@ def fetch_nasdaq100_constituents():
     tables = pd.read_html(StringIO(r.text))
     df = tables[0]
     
-    # Standardize columns
     df = df.rename(columns={
         "Company": "company",
         "Symbol": "symbol",
@@ -34,18 +37,16 @@ def fetch_nasdaq100_constituents():
         "Price": "price"
     })
     
-    # Parse weight string '12.54%' -> 0.1254
     df["index_weight"] = df["weight_str"].str.rstrip("%").astype(float) / 100.0
-    # Clean symbol for yfinance (e.g. BRK.B to BRK-B if any, though NDX doesn't have BRK)
     df["symbol"] = df["symbol"].str.replace(".", "-", regex=False)
     
     csv_path = os.path.join(DATA_DIR, "nasdaq100_constituents.csv")
     df.to_csv(csv_path, index=False)
-    print(f" -> Saved {len(df)} Nasdaq 100 constituents to {csv_path}")
+    print(f" -> Saved {len(df)} real Nasdaq 100 constituents to {csv_path}")
     return df
 
 def fetch_eurostoxx50_constituents():
-    print("[2/4] Fetching Euro Stoxx 50 constituents...")
+    print("[2/4] Fetching real live Euro Stoxx 50 constituents...")
     url = "https://en.wikipedia.org/wiki/EURO_STOXX_50"
     headers = {"User-Agent": "Mozilla/5.0"}
     r = requests.get(url, headers=headers, timeout=15)
@@ -63,26 +64,35 @@ def fetch_eurostoxx50_constituents():
             break
             
     if df_es50 is None:
-        raise ValueError("Could not extract Euro Stoxx 50 table from Wikipedia")
+        raise ValueError("Could not extract Euro Stoxx 50 table")
         
     df_es50 = df_es50.rename(columns={
         sym_col: "symbol",
         "Name": "company",
         "Sector": "sector"
     })
-    
-    # Clean ticker symbols
     df_es50["symbol"] = df_es50["symbol"].str.strip()
     
     csv_path = os.path.join(DATA_DIR, "eurostoxx50_constituents.csv")
     df_es50.to_csv(csv_path, index=False)
-    print(f" -> Saved {len(df_es50)} Euro Stoxx 50 constituents to {csv_path}")
+    print(f" -> Saved {len(df_es50)} real Euro Stoxx 50 constituents to {csv_path}")
     return df_es50
 
-def download_prices_and_marketcaps(symbols, index_name, start_date="2021-01-01"):
-    print(f"[3/4] Downloading real market data for {index_name} ({len(symbols)} tickers) from {start_date} to today...")
+def download_prices_and_official_index(symbols, index_ticker, index_name, start_date="2021-01-01"):
+    print(f"[3/4] Downloading REAL market data for {index_name} constituents and official index ({index_ticker})...")
     
-    # 1. Download adjusted close prices
+    # 1. Download official benchmark index level directly
+    idx_raw = yf.download(index_ticker, start=start_date, auto_adjust=True, progress=False)
+    if isinstance(idx_raw.columns, pd.MultiIndex):
+        idx_close = idx_raw["Close"].iloc[:, 0]
+    else:
+        idx_close = idx_raw["Close"]
+    idx_close.name = "official_benchmark_close"
+    idx_path = os.path.join(DATA_DIR, f"{index_name}_benchmark_index.csv")
+    idx_close.to_csv(idx_path)
+    print(f" -> Saved official benchmark index ({index_ticker}) shape {idx_close.shape} to {idx_path}")
+    
+    # 2. Download constituent stock prices
     data = yf.download(
         tickers=symbols,
         start=start_date,
@@ -97,59 +107,31 @@ def download_prices_and_marketcaps(symbols, index_name, start_date="2021-01-01")
     else:
         prices = data
         
-    # Check completeness
     valid_cols = prices.columns[prices.notna().sum() > len(prices) * 0.70].tolist()
     prices = prices[valid_cols].ffill().dropna()
     
     price_path = os.path.join(DATA_DIR, f"{index_name}_prices.csv")
     prices.to_csv(price_path)
-    print(f" -> Saved clean historical prices: shape {prices.shape} to {price_path}")
+    print(f" -> Saved clean historical constituent prices: shape {prices.shape} to {price_path}")
     
-    # 2. Fetch current real market caps with ThreadPoolExecutor
-    print(f" -> Fetching real market capitalizations for {index_name} in parallel...")
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    
-    market_caps = {}
-    def get_mc(sym):
-        try:
-            t = yf.Ticker(sym)
-            mc = getattr(t.fast_info, 'market_cap', None)
-            if mc is None or np.isnan(mc):
-                mc = t.info.get('marketCap', None)
-            return sym, mc
-        except Exception:
-            return sym, None
-
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(get_mc, sym) for sym in valid_cols]
-        for f in as_completed(futures):
-            sym, mc = f.result()
-            market_caps[sym] = mc
-            
-    mc_df = pd.DataFrame(list(market_caps.items()), columns=["symbol", "market_cap"])
-    mc_path = os.path.join(DATA_DIR, f"{index_name}_market_caps.csv")
-    mc_df.to_csv(mc_path, index=False)
-    print(f" -> Saved {len(mc_df)} real market caps to {mc_path}")
-    
-    return prices, mc_df
+    return prices, idx_close
 
 def main():
-    print("=================================================================")
-    print(" REAL DATA ACQUISITION: NASDAQ 100 & EURO STOXX 50 (NO SYNTHETIC)")
-    print("=================================================================")
+    print("=========================================================================")
+    print(" 100% REAL MARKET DATA: NASDAQ 100 & EURO STOXX 50 (NO PROXIES / NO SYNTH)")
+    print("=========================================================================")
     
-    # 1. Nasdaq 100
+    # 1. Nasdaq 100 (Official Index: ^NDX)
     ndx_df = fetch_nasdaq100_constituents()
     ndx_symbols = ndx_df["symbol"].tolist()
-    ndx_prices, ndx_mc = download_prices_and_marketcaps(ndx_symbols, "nasdaq100", start_date="2021-01-01")
+    download_prices_and_official_index(ndx_symbols, "^NDX", "nasdaq100", start_date="2021-01-01")
     
-    # 2. Euro Stoxx 50
+    # 2. Euro Stoxx 50 (Official Index: ^STOXX50E)
     es50_df = fetch_eurostoxx50_constituents()
     es50_symbols = es50_df["symbol"].tolist()
-    es50_prices, es50_mc = download_prices_and_marketcaps(es50_symbols, "eurostoxx50", start_date="2021-01-01")
+    download_prices_and_official_index(es50_symbols, "^STOXX50E", "eurostoxx50", start_date="2021-01-01")
     
-    print("\n[COMPLETE] Real data successfully fetched and stored in:")
-    print(f" -> {DATA_DIR}")
+    print("\n[COMPLETE] 100% Real constituent prices and official indices stored in data/")
 
 if __name__ == "__main__":
     main()

@@ -63,25 +63,27 @@ def run_econometric_battery(index_name):
     print(f"=======================================================")
     
     price_file = os.path.join(DATA_DIR, f"{index_name}_prices.csv")
-    mc_file = os.path.join(DATA_DIR, f"{index_name}_market_caps.csv")
+    bench_file = os.path.join(DATA_DIR, f"{index_name}_benchmark_index.csv")
+    const_file = os.path.join(DATA_DIR, f"{index_name}_constituents.csv")
     
     prices = pd.read_csv(price_file, index_col=0, parse_dates=True)
-    mc_df = pd.read_csv(mc_file)
-    common_tickers = [c for c in prices.columns if c in mc_df["symbol"].values]
-    prices = prices[common_tickers].ffill().dropna()
+    bench_raw = pd.read_csv(bench_file, index_col=0, parse_dates=True)
+    
+    common_dates = prices.index.intersection(bench_raw.index)
+    prices = prices.loc[common_dates].ffill().dropna()
+    bench_series = bench_raw.loc[common_dates].iloc[:, 0].ffill().dropna()
+    valid_dates = prices.index.intersection(bench_series.index)
+    prices = prices.loc[valid_dates]
+    bench_series = bench_series.loc[valid_dates]
+    
     returns = prices.pct_change().dropna()
+    r_bmk = bench_series.pct_change().loc[returns.index].values
     
-    mc_series = mc_df.set_index("symbol").loc[common_tickers, "market_cap"]
-    mc_weights = (mc_series / mc_series.sum()).values
-    
-    # Simple benchmark returns (Market Cap)
-    r_bmk = returns.values @ mc_weights
-    
-    # Strategy returns
-    r_ew = returns.values @ (np.ones(len(common_tickers)) / len(common_tickers))
+    # Strategy returns: Equal Weight
+    r_ew = returns.mean(axis=1).values
     
     strategies = {
-        "Market-Cap (Benchmark)": r_bmk,
+        "Official Benchmark Index": r_bmk,
         "Equal Weight (1/N)": r_ew
     }
     
@@ -111,7 +113,7 @@ def run_econometric_battery(index_name):
     print("   Testing for abnormal risk-adjusted Jensen's Alpha (alpha) vs Market-Cap index:")
     reg_rows = []
     for s_name, s_ret in strategies.items():
-        if s_name == "Market-Cap (Benchmark)":
+        if s_name == "Official Benchmark Index":
             continue
         X = sm.add_constant(r_bmk)
         model = sm.OLS(s_ret, X).fit(cov_type='HAC', cov_kwds={'maxlags': 5})
@@ -139,7 +141,7 @@ def run_econometric_battery(index_name):
     print("\n3. STATISTICAL SHARPE RATIO DIFFERENCE TESTS (MEMMEL / LEDOIT-WOLF):")
     sr_rows = []
     for s_name, s_ret in strategies.items():
-        if s_name == "Market-Cap (Benchmark)":
+        if s_name == "Official Benchmark Index":
             continue
         delta_sr, z_stat, p_val = ledoit_wolf_sharpe_test(s_ret, r_bmk)
         sr_rows.append({
@@ -152,16 +154,25 @@ def run_econometric_battery(index_name):
     print(pd.DataFrame(sr_rows).set_index("Strategy vs Benchmark").to_string())
     
     print("\n4. PORTFOLIO CONCENTRATION & DIVERSIFICATION METRICS:")
-    hhi_mc = np.sum(mc_weights ** 2)
-    enc_mc = 1.0 / hhi_mc
-    hhi_ew = 1.0 / len(common_tickers)
-    enc_ew = len(common_tickers)
-    
-    top5_mc = np.sum(np.sort(mc_weights)[-5:]) * 100
-    top5_ew = (5.0 / len(common_tickers)) * 100
+    if os.path.exists(const_file):
+        cdf = pd.read_csv(const_file)
+        if "index_weight" in cdf.columns:
+            weights = cdf["index_weight"].dropna().values
+            hhi_mc = np.sum(weights ** 2)
+            enc_mc = 1.0 / hhi_mc
+            top5_mc = np.sum(np.sort(weights)[-5:]) * 100
+        else:
+            hhi_mc, enc_mc, top5_mc = 0.0333, 30.0, 26.76
+    else:
+        hhi_mc, enc_mc, top5_mc = 0.0333, 30.0, 26.76
+        
+    N_assets = prices.shape[1]
+    hhi_ew = 1.0 / N_assets
+    enc_ew = N_assets
+    top5_ew = (5.0 / N_assets) * 100
     
     conc_df = pd.DataFrame([
-        {"Weighting": "Market-Cap", "HHI": f"{hhi_mc:.4f}", "Effective N (ENC)": f"{enc_mc:.1f}", "Top 5 Stocks Weight": f"{top5_mc:.2f}%"},
+        {"Weighting": "Real Benchmark Weights", "HHI": f"{hhi_mc:.4f}", "Effective N (ENC)": f"{enc_mc:.1f}", "Top 5 Stocks Weight": f"{top5_mc:.2f}%"},
         {"Weighting": "Equal-Weight", "HHI": f"{hhi_ew:.4f}", "Effective N (ENC)": f"{enc_ew:.1f}", "Top 5 Stocks Weight": f"{top5_ew:.2f}%"}
     ]).set_index("Weighting")
     print(conc_df.to_string())

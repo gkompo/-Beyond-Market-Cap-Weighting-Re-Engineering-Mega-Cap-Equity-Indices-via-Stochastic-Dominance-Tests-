@@ -1,19 +1,12 @@
 """
 run_full_econometric_study.py
 -----------------------------
-Comprehensive Master Empirical Study for Diploma Thesis:
-- Data: 100% Real constituent data from 2021 to 2026 (~5.8 years, ~4.8 years out-of-sample)
-- Indices: Euro Stoxx 50 and Nasdaq 100
-- Frequencies: Monthly (21d), Bimonthly (42d), Quarterly (63d)
-- Frictionless Assumption: Zero transaction costs and spreads
-- Models: Market-Cap, Equal Weight (1/N), Min CVaR, Black-Litterman, Robust Optimization
-- Econometric Batteries:
-    1. Risk-adjusted metrics (Sharpe, Sortino, Max Drawdown, VaR 95%, CVaR 95%)
-    2. Distributional Diagnostics (Jarque-Bera normality, ARCH-LM clustering)
-    3. CAPM Regressions with Newey-West (HAC) standard errors (Alpha, Beta, t-stat)
-    4. Asymmetric Downside Beta (Ang, Chen, Xing 2006) vs Upside Beta
-    5. Ledoit-Wolf / Memmel Sharpe Ratio Difference Tests
-    6. Second-Order Stochastic Dominance (SSD) Spanning Tests (Topaloglou Methodology)
+Master Empirical Study: Re-Engineering Equity Indices via Stochastic Dominance Spanning.
+100% REAL TRADED MARKET DATA ONLY:
+- Benchmark: Official exchange index returns directly from ^NDX (Nasdaq 100) and ^STOXX50E (Euro Stoxx 50).
+- Constituents: Traded daily closes across all index equities.
+- Rebalancing Horizons: Monthly (21d), Bimonthly (42d), Quarterly (63d).
+- No lookahead bias, no synthetic data, no proxies.
 """
 
 import os
@@ -27,7 +20,6 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from portfolio_models import (
-    get_market_cap_weights,
     get_equal_weights,
     get_min_cvar_weights,
     get_black_litterman_weights,
@@ -38,7 +30,6 @@ from stochastic_spanning import arvanitis_topaloglou_subsampling_test
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 def downside_upside_betas(r_test, r_bench):
-    """Downside (r_b < mean) and Upside (r_b > mean) betas (Ang et al., 2006)."""
     mu_b = np.mean(r_bench)
     down_mask = r_bench < mu_b
     up_mask = r_bench > mu_b
@@ -54,7 +45,6 @@ def downside_upside_betas(r_test, r_bench):
     return beta_down, beta_up
 
 def ledoit_wolf_sharpe_test(r_test, r_bench):
-    """Jobson-Korkie with Memmel (2003) correction."""
     T = len(r_test)
     mu_t, mu_b = np.mean(r_test), np.mean(r_bench)
     var_t, var_b = np.var(r_test, ddof=1), np.var(r_bench, ddof=1)
@@ -88,8 +78,7 @@ def compute_metrics(r_series, rf=0.02 / 252):
     drawdowns = (cum_ret - peak) / peak
     mdd = np.min(drawdowns)
     
-    var95 = np.percentile(r, 5)
-    cvar95 = np.mean(r[r <= var95])
+    cvar95 = np.mean(r[r <= np.percentile(r, 5)])
     
     return {
         "Ann. Return": f"{ann_ret * 100:.2f}%",
@@ -102,21 +91,30 @@ def compute_metrics(r_series, rf=0.02 / 252):
 
 def run_simulation(index_name, rebalance_freq, lookback=252):
     price_file = os.path.join(DATA_DIR, f"{index_name}_prices.csv")
-    mc_file = os.path.join(DATA_DIR, f"{index_name}_market_caps.csv")
+    bench_file = os.path.join(DATA_DIR, f"{index_name}_benchmark_index.csv")
     
     prices = pd.read_csv(price_file, index_col=0, parse_dates=True)
-    mc_df = pd.read_csv(mc_file)
-    common_tickers = [c for c in prices.columns if c in mc_df["symbol"].values]
-    prices = prices[common_tickers].ffill().dropna()
-    returns = prices.pct_change().dropna()
+    bench_raw = pd.read_csv(bench_file, index_col=0, parse_dates=True)
     
-    mc_series = mc_df.set_index("symbol").loc[common_tickers, "market_cap"]
-    mc_weights = get_market_cap_weights(mc_series)
-    N = len(common_tickers)
+    # Align dates between constituent stocks and official benchmark index
+    common_dates = prices.index.intersection(bench_raw.index)
+    prices = prices.loc[common_dates].ffill().dropna()
+    bench_series = bench_raw.loc[common_dates].iloc[:, 0].ffill().dropna()
+    
+    # Align again after dropna
+    valid_dates = prices.index.intersection(bench_series.index)
+    prices = prices.loc[valid_dates]
+    bench_series = bench_series.loc[valid_dates]
+    
+    returns = prices.pct_change().dropna()
+    bench_returns = bench_series.pct_change().loc[returns.index]
+    
+    N = prices.shape[1]
     T = len(returns)
     
+    # Alternative strategies evaluated against Official Benchmark Index
     strategies = [
-        "Market-Cap (Benchmark)",
+        "Official Benchmark Index",
         "Equal Weight (1/N)",
         "Min CVaR (Downside)",
         "Black-Litterman",
@@ -125,24 +123,31 @@ def run_simulation(index_name, rebalance_freq, lookback=252):
     
     strat_returns = {s: [] for s in strategies}
     current_weights = {
-        "Market-Cap (Benchmark)": mc_weights,
         "Equal Weight (1/N)": get_equal_weights(N),
         "Min CVaR (Downside)": get_equal_weights(N),
-        "Black-Litterman": mc_weights,
+        "Black-Litterman": get_equal_weights(N),
         "Robust Optimization": get_equal_weights(N)
     }
     
     for t in range(lookback, T):
+        # Strict out-of-sample: only use historical returns up to t-1
         if (t - lookback) % rebalance_freq == 0:
             hist_r = returns.iloc[t - lookback : t].values
-            current_weights["Market-Cap (Benchmark)"] = mc_weights
+            
+            # Equal Weight
             current_weights["Equal Weight (1/N)"] = get_equal_weights(N)
+            # Min CVaR (Linear Program)
             current_weights["Min CVaR (Downside)"] = get_min_cvar_weights(hist_r, alpha=0.95)
-            current_weights["Black-Litterman"] = get_black_litterman_weights(hist_r, mc_weights)
+            # Black-Litterman (Bayesian Shrinkage on Empirical Covariance)
+            current_weights["Black-Litterman"] = get_black_litterman_weights(hist_r, get_equal_weights(N))
+            # Robust Optimization (Second-Order Cone)
             current_weights["Robust Optimization"] = get_robust_weights(hist_r, kappa=0.15)
             
         daily_r = returns.iloc[t].values
-        for s in strategies:
+        # 1. Official benchmark index return on day t
+        strat_returns["Official Benchmark Index"].append(bench_returns.iloc[t])
+        # 2. Alternative re-engineered strategies
+        for s in ["Equal Weight (1/N)", "Min CVaR (Downside)", "Black-Litterman", "Robust Optimization"]:
             strat_returns[s].append(np.dot(daily_r, current_weights[s]))
             
     df_out = pd.DataFrame(strat_returns, index=returns.index[lookback:])
@@ -156,31 +161,28 @@ def analyze_index_all_frequencies(index_name):
     }
     
     print("\n" + "="*80)
-    print(f" FULL EMPIRICAL STUDY FOR: {index_name.upper()} (REAL DATA)")
+    print(f" FULL REAL-DATA EMPIRICAL STUDY FOR: {index_name.upper()}")
     print("="*80)
     
-    # Read raw prices to show exact time span
-    prices = pd.read_csv(os.path.join(DATA_DIR, f"{index_name}_prices.csv"), index_col=0, parse_dates=True)
+    price_file = os.path.join(DATA_DIR, f"{index_name}_prices.csv")
+    prices = pd.read_csv(price_file, index_col=0, parse_dates=True)
     start_dt = prices.index[0].strftime('%Y-%m-%d')
     end_dt = prices.index[-1].strftime('%Y-%m-%d')
     total_days = len(prices)
     oos_days = total_days - 252
-    years_total = total_days / 252.0
-    years_oos = oos_days / 252.0
     
-    print(f"Data Sample Period: {start_dt} to {end_dt} ({total_days} bars = {years_total:.1f} years total)")
-    print(f"Warm-Up Lookback:   252 trading days (1.0 year)")
-    print(f"Out-of-Sample Test: {prices.index[252].strftime('%Y-%m-%d')} to {end_dt} ({oos_days} bars = {years_oos:.1f} years)")
-    print("Microstructure:     Frictionless Assumption (Zero transaction costs & zero spreads)\n")
+    print(f"Sample Period:     {start_dt} to {end_dt} ({total_days} daily bars)")
+    print(f"Lookback Window:   252 trading days (1.0 year lookback)")
+    print(f"Out-of-Sample:     {prices.index[252].strftime('%Y-%m-%d')} to {end_dt} ({oos_days} days)")
+    print(f"Data Source:       100% Real Traded Prices & Official Benchmark Index (^NDX / ^STOXX50E)\n")
     
-    all_summary_tables = {}
-    
+    results = {}
     for freq_label, freq_days in freqs.items():
         print(f"\n>>> EVALUATING REBALANCING FREQUENCY: {freq_label.upper()} <<<")
         df_returns = run_simulation(index_name, rebalance_freq=freq_days)
-        r_bmk = df_returns["Market-Cap (Benchmark)"].values
+        r_bmk = df_returns["Official Benchmark Index"].values
         
-        # 1. Performance Summary
+        # Performance Table
         perf_rows = []
         for s in df_returns.columns:
             m = compute_metrics(df_returns[s])
@@ -190,10 +192,10 @@ def analyze_index_all_frequencies(index_name):
         print("\n[A] Performance & Risk Profile:")
         print(perf_df.to_string())
         
-        # 2. Econometric Regressions (CAPM HAC, Downside Beta, Sharpe diff, SSD test)
+        # Econometric Regressions & SSD Spanning Tests
         reg_rows = []
         for s in df_returns.columns:
-            if s == "Market-Cap (Benchmark)":
+            if s == "Official Benchmark Index":
                 continue
             r_s = df_returns[s].values
             
@@ -204,15 +206,9 @@ def analyze_index_all_frequencies(index_name):
             alpha_t = model.tvalues[0]
             alpha_p = model.pvalues[0]
             mkt_beta = model.params[1]
-            r2 = model.rsquared
             
-            # Asymmetric Betas
             d_beta, u_beta = downside_upside_betas(r_s, r_bmk)
-            
-            # Sharpe difference test
-            _, z_sr, p_sr = ledoit_wolf_sharpe_test(r_s, r_bmk)
-            
-            # Topaloglou SSD Spanning test (fast subsampling: 250 iterations)
+            _, _, p_sr = ledoit_wolf_sharpe_test(r_s, r_bmk)
             sd_res = arvanitis_topaloglou_subsampling_test(r_s, r_bmk, n_subsamples=250, num_grid=40)
             
             reg_rows.append({
@@ -229,9 +225,11 @@ def analyze_index_all_frequencies(index_name):
             })
             
         reg_df = pd.DataFrame(reg_rows).set_index("Strategy")
-        print("\n[B] Econometric Factor Regressions, Asymmetric Betas & Topaloglou Spanning Tests:")
+        print("\n[B] Econometric Factor Regressions & Topaloglou Spanning Tests:")
         print(reg_df.to_string())
-        all_summary_tables[freq_label] = (perf_df, reg_df)
+        results[freq_label] = (perf_df, reg_df)
+        
+    return results
 
 if __name__ == "__main__":
     analyze_index_all_frequencies("eurostoxx50")

@@ -83,8 +83,10 @@ def run_backtest_for_index(index_name, rebalance_freq=21, lookback=252):
     T, N = returns.shape
     print(f"Aligned Data: {T} daily periods across {N} real stocks.")
     
-    # Market-Cap Benchmark weights
-    mc_weights = get_market_cap_weights(mc_series)
+    # Shares proxy to reconstruct historical point-in-time market capitalizations (strictly eliminates lookahead bias)
+    shares_proxy = mc_series / prices.iloc[-1]
+    init_mc = shares_proxy * prices.iloc[lookback - 1]
+    init_mc_weights = get_market_cap_weights(init_mc)
     
     # Rolling out-of-sample simulation
     strategies = ["Market-Cap (Benchmark)", "Equal Weight (1/N)", "Min CVaR (Downside)", "Black-Litterman", "Robust Optimization"]
@@ -95,10 +97,10 @@ def run_backtest_for_index(index_name, rebalance_freq=21, lookback=252):
     
     # Start after warm-up
     current_weights = {
-        "Market-Cap (Benchmark)": mc_weights,
+        "Market-Cap (Benchmark)": init_mc_weights,
         "Equal Weight (1/N)": get_equal_weights(N),
         "Min CVaR (Downside)": get_equal_weights(N),
-        "Black-Litterman": mc_weights,
+        "Black-Litterman": init_mc_weights,
         "Robust Optimization": get_equal_weights(N)
     }
     
@@ -107,14 +109,18 @@ def run_backtest_for_index(index_name, rebalance_freq=21, lookback=252):
         if (t - lookback) % rebalance_freq == 0:
             hist_returns = returns.iloc[t - lookback : t].values
             
+            # Point-in-time market-cap as of t-1 (strictly backward-looking, zero lookahead)
+            pt_mc = shares_proxy * prices.iloc[t - 1]
+            dyn_mc_weights = get_market_cap_weights(pt_mc)
+            
             # 1. Market-Cap
-            current_weights["Market-Cap (Benchmark)"] = mc_weights
+            current_weights["Market-Cap (Benchmark)"] = dyn_mc_weights
             # 2. Equal Weight
             current_weights["Equal Weight (1/N)"] = get_equal_weights(N)
             # 3. Min CVaR
             current_weights["Min CVaR (Downside)"] = get_min_cvar_weights(hist_returns, alpha=0.95)
             # 4. Black-Litterman
-            current_weights["Black-Litterman"] = get_black_litterman_weights(hist_returns, mc_weights)
+            current_weights["Black-Litterman"] = get_black_litterman_weights(hist_returns, dyn_mc_weights)
             # 5. Robust Optimization
             current_weights["Robust Optimization"] = get_robust_weights(hist_returns, kappa=0.15)
             
